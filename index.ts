@@ -2,10 +2,11 @@ import express from 'express';
 import multer from 'multer';
 import dotenv from 'dotenv'
 import { DynamoDB } from "@aws-sdk/client-dynamodb";
-
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+const { fromIni } = require('@aws-sdk/credential-provider-ini');
 dotenv.config()
 
-import { config } from 'aws-sdk';
+import AWS, { config } from 'aws-sdk';
  
 
 const bucketName = process.env.AWS_BUCKET_NAME
@@ -15,8 +16,8 @@ const accessKeyId = process.env.AWS_ACCESS_KEY
 const secretAccessKey = process.env.AWS_SECRET_KEY
 const { RekognitionClient, DetectLabelsCommand } = require("@aws-sdk/client-rekognition");
 
+const rekognition = new AWS.Rekognition();
 
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 
 const PORT =5050;
 
@@ -77,6 +78,8 @@ app.post('/upload', upload.single('file'), (req, res) => {
     const fileURL = req.file.destination + req.file.filename;
 
 
+
+
     const rekognitionClient = new RekognitionClient({
         region: region, // Replace with your AWS region
         credentials: {
@@ -84,21 +87,82 @@ app.post('/upload', upload.single('file'), (req, res) => {
           secretAccessKey: secretAccessKey,
         },
       });
+
+
+      const s3Client = new AWS.S3({
+        region: region, 
+        accessKeyId: accessKeyId,
+        secretAccessKey: secretAccessKey, // Replace with your AWS CLI profile name or provide accessKeyId and secretAccessKey directly
+      });
+      
+      async function uploadImageToS3(imageFilePath:any, bucketName:any, objectKey:any) {
+        const imageBuffer = fs.readFileSync(imageFilePath);
+      
+        
+        const params = {
+          Bucket: bucketName,
+          Key: objectKey,
+          Body: imageBuffer,
+        };
+      
+        try {
+          const command = new PutObjectCommand(params);
+          const response = await s3Client.putObject(command);
+          console.log('Image uploaded successfully:', response);
+        } catch (err) {
+          console.error('Error uploading image to S3:', err);
+        }
+      }
+      
+      // Usage
+      const imageFilePath = fileURL; // Replace with the actual image file path
+      const bucketNa = bucketName; // Replace with your S3 bucket name
+      const objectKey = req.file?.filename; // Replace with the desired object key
+      
+      uploadImageToS3(imageFilePath, bucketNa, objectKey);
+      
       
       async function detectObjectsAndLog(imageFilePath: string) {
         const imageBuffer = fs.readFileSync(imageFilePath);
       
         const params = {
           Image: {
-            Bytes: imageBuffer,
-          },
+            S3Object: {
+                Bucket: bucketName, 
+                Name: "mmm.jpg"
+               }          
+            },
         };
       
         try {
           const command = new DetectLabelsCommand(params);
           const response = await rekognitionClient.send(command);
+
           const result = JSON.stringify(response.Labels, null, 2)
           console.log(`Detected objects:${result}`);
+
+          let detectedTXT:string;
+
+          rekognition.detectText(params, function(err:any, data:any) {
+            if (err) console.log(err, err.stack); // an error occurred
+            else     console.log(data);           // successful response
+        
+            //console.log(data.TextDetections);
+        
+        
+            for(var i = 0; i < data.TextDetections.length;i++){
+        
+              //console.log(data.TextDetections[i].Type)
+        
+              if(data.TextDetections[i].Type === 'LINE')
+              {
+                detectedTXT = data.TextDetections[i].DetectedText;
+              }
+            }
+        
+            console.log(detectedTXT);
+        
+          });
         } catch (err) {
           console.error('Error detecting objects:', err);
         }
